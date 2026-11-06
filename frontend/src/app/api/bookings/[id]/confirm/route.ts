@@ -1,26 +1,65 @@
 import { pool } from "@/lib/db";
-import { NextResponse } from "next/server";
+import { getUserFromRequest } from "@/lib/auth";
+import { NextRequest, NextResponse } from "next/server";
+
+const PAYMENT_METHODS = ["upi", "card", "netbanking"];
 
 export async function POST(
-  req: Request,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
+  const bookingId = Number(id);
+
+  const user = getUserFromRequest(req);
+  if (!user) {
+    return NextResponse.json({ error: "Not logged in" }, { status: 401 });
+  }
+  if (user.role !== "attendee") {
+    return NextResponse.json({ error: "Attendees only" }, { status: 403 });
+  }
 
   try {
-    const body = await req.json();
-    const { amount, paymentMethod } = body;
+    const { paymentMethod } = await req.json();
 
-    if (!amount || !paymentMethod) {
+    if (!Number.isInteger(bookingId) || !PAYMENT_METHODS.includes(paymentMethod)) {
       return NextResponse.json(
-        { error: "amount and paymentMethod are required" },
+        { error: `paymentMethod must be one of: ${PAYMENT_METHODS.join(", ")}` },
         { status: 400 }
       );
     }
 
-    await pool.query("CALL confirm_booking(?, ?, ?)", [id, amount, paymentMethod]);
+    const [attendeeRows]: any = await pool.query(
+      "SELECT attendee_id FROM attendees WHERE user_id = ?",
+      [user.userId]
+    );
+    if (attendeeRows.length === 0) {
+      return NextResponse.json({ error: "Attendee profile not found" }, { status: 403 });
+    }
 
-    return NextResponse.json({ message: "Booking confirmed", bookingId: Number(id) });
+    const conn = await pool.getConnection();
+    try {
+      await conn.query("CALL confirm_booking(?, ?, ?, @result)", [
+        bookingId,
+        attendeeRows[0].attendee_id,
+        paymentMethod,
+      ]);
+      const [[row]]: any = await conn.query("SELECT @result AS result");
+
+      if (row.result === "not_found") {
+        return NextResponse.json({ error: "Booking not found" }, { status: 404 });
+      }
+      if (row.result === "not_held") {
+        return NextResponse.json(
+          { error: "Booking is no longer held (expired, cancelled or already confirmed)" },
+          { status: 409 }
+        );
+      }
+
+      return NextResponse.json({ message: "Booking confirmed", bookingId });
+    } finally {
+      conn.release();
+    }
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });
   }
