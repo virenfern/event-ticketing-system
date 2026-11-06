@@ -5,6 +5,63 @@ import { NextRequest, NextResponse } from "next/server";
 const HOLD_MINUTES = 10;
 const MAX_SEATS_PER_BOOKING = 10;
 
+export async function GET(req: NextRequest) {
+  const user = getUserFromRequest(req);
+  if (!user) {
+    return NextResponse.json({ error: "Not logged in" }, { status: 401 });
+  }
+  if (user.role !== "attendee") {
+    return NextResponse.json({ error: "Attendees only" }, { status: 403 });
+  }
+
+  try {
+    const [bookings]: any = await pool.query(
+      `SELECT b.booking_id, b.event_id, e.event_name, e.event_date, e.event_time,
+              v.name AS venue_name, b.status, b.total_amount, b.booking_time,
+              h.expires_at
+       FROM bookings b
+       JOIN attendees a ON a.attendee_id = b.attendee_id
+       JOIN events e ON e.event_id = b.event_id
+       JOIN venues v ON v.venue_id = e.venue_id
+       LEFT JOIN seat_holds h ON h.booking_id = b.booking_id AND h.status = 'active'
+       WHERE a.user_id = ?
+       ORDER BY b.booking_time DESC`,
+      [user.userId]
+    );
+
+    if (bookings.length === 0) {
+      return NextResponse.json([]);
+    }
+
+    const ids = bookings.map((b: any) => b.booking_id);
+    const [seatRows]: any = await pool.query(
+      `SELECT bs.booking_id, s.seat_id, s.section, s.row_no, s.seat_no,
+              s.seat_type, bs.price_at_booking
+       FROM booking_seats bs
+       JOIN seats s ON s.seat_id = bs.seat_id
+       WHERE bs.booking_id IN (?)
+       ORDER BY s.section, s.row_no, s.seat_no`,
+      [ids]
+    );
+
+    const seatsByBooking = new Map<number, any[]>();
+    for (const row of seatRows) {
+      const list = seatsByBooking.get(row.booking_id) ?? [];
+      list.push(row);
+      seatsByBooking.set(row.booking_id, list);
+    }
+
+    return NextResponse.json(
+      bookings.map((b: any) => ({
+        ...b,
+        seats: seatsByBooking.get(b.booking_id) ?? [],
+      }))
+    );
+  } catch (err: any) {
+    return NextResponse.json({ error: err.message }, { status: 500 });
+  }
+}
+
 export async function POST(req: NextRequest) {
   const user = getUserFromRequest(req);
   if (!user) {
