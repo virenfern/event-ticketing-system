@@ -1,4 +1,5 @@
 import { pool } from "@/lib/db";
+import { getEventContentCollection } from "@/lib/mongodb";
 import { NextResponse } from "next/server";
 
 export async function GET(
@@ -29,7 +30,17 @@ export async function GET(
       [id]
     );
 
-    return NextResponse.json({ event: eventRows[0], seats: seatRows });
+    const contentCollection = await getEventContentCollection();
+    const content = await contentCollection.findOne(
+      { event_id: Number(id) },
+      { projection: { _id: 0 } }
+    );
+
+    return NextResponse.json({
+      event: eventRows[0],
+      seats: seatRows,
+      content: content ?? null,
+    });
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });
   }
