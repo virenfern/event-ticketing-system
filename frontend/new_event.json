@@ -1,0 +1,18 @@
+{
+  "venueId": 2,
+  "eventName": "Indie Acoustic Evening",
+  "eventDate": "2026-12-12",
+  "eventTime": "18:00:00",
+  "basePrice": 799,
+  "seatLayout": [
+    { "section": "A", "rows": 2, "seatsPerRow": 4, "seatType": "vip", "price": 1500 },
+    { "section": "B", "rows": 3, "seatsPerRow": 5 }
+  ],
+  "content": {
+    "description": "An intimate acoustic evening with local indie artists.",
+    "bannerUrl": "https://example.com/banners/indie-acoustic.jpg",
+    "tags": ["music", "acoustic", "indoor"],
+    "artists": [{ "name": "Meera Rao", "bio": "Singer-songwriter from Bengaluru." }],
+    "faqs": [{ "question": "Is food served?", "answer": "Light snacks are available." }]
+  }
+}

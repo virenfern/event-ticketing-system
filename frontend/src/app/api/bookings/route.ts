@@ -1,0 +1,129 @@
+import { pool } from "@/lib/db";
+import { getUserFromRequest } from "@/lib/auth";
+import { NextRequest, NextResponse } from "next/server";
+
+const HOLD_MINUTES = 10;
+const MAX_SEATS_PER_BOOKING = 10;
+
+export async function GET(req: NextRequest) {
+  const user = getUserFromRequest(req);
+  if (!user) {
+    return NextResponse.json({ error: "Not logged in" }, { status: 401 });
+  }
+  if (user.role !== "attendee") {
+    return NextResponse.json({ error: "Attendees only" }, { status: 403 });
+  }
+
+  try {
+    const [bookings]: any = await pool.query(
+      `SELECT b.booking_id, b.event_id, e.event_name, e.event_date, e.event_time,
+              v.name AS venue_name, b.status, b.total_amount, b.booking_time,
+              h.expires_at
+       FROM bookings b
+       JOIN attendees a ON a.attendee_id = b.attendee_id
+       JOIN events e ON e.event_id = b.event_id
+       JOIN venues v ON v.venue_id = e.venue_id
+       LEFT JOIN seat_holds h ON h.booking_id = b.booking_id AND h.status = 'active'
+       WHERE a.user_id = ?
+       ORDER BY b.booking_time DESC`,
+      [user.userId]
+    );
+
+    if (bookings.length === 0) {
+      return NextResponse.json([]);
+    }
+
+    const ids = bookings.map((b: any) => b.booking_id);
+    const [seatRows]: any = await pool.query(
+      `SELECT bs.booking_id, s.seat_id, s.section, s.row_no, s.seat_no,
+              s.seat_type, bs.price_at_booking
+       FROM booking_seats bs
+       JOIN seats s ON s.seat_id = bs.seat_id
+       WHERE bs.booking_id IN (?)
+       ORDER BY s.section, s.row_no, s.seat_no`,
+      [ids]
+    );
+
+    const seatsByBooking = new Map<number, any[]>();
+    for (const row of seatRows) {
+      const list = seatsByBooking.get(row.booking_id) ?? [];
+      list.push(row);
+      seatsByBooking.set(row.booking_id, list);
+    }
+
+    return NextResponse.json(
+      bookings.map((b: any) => ({
+        ...b,
+        seats: seatsByBooking.get(b.booking_id) ?? [],
+      }))
+    );
+  } catch (err: any) {
+    return NextResponse.json({ error: err.message }, { status: 500 });
+  }
+}
+
+export async function POST(req: NextRequest) {
+  const user = getUserFromRequest(req);
+  if (!user) {
+    return NextResponse.json({ error: "Not logged in" }, { status: 401 });
+  }
+  if (user.role !== "attendee") {
+    return NextResponse.json({ error: "Attendees only" }, { status: 403 });
+  }
+
+  try {
+    const { eventId, seatIds } = await req.json();
+
+    if (
+      !Number.isInteger(eventId) ||
+      !Array.isArray(seatIds) ||
+      seatIds.length === 0 ||
+      seatIds.length > MAX_SEATS_PER_BOOKING ||
+      !seatIds.every((s: unknown) => Number.isInteger(s))
+    ) {
+      return NextResponse.json(
+        { error: `eventId and 1-${MAX_SEATS_PER_BOOKING} integer seatIds are required` },
+        { status: 400 }
+      );
+    }
+
+    const [attendeeRows]: any = await pool.query(
+      "SELECT attendee_id FROM attendees WHERE user_id = ?",
+      [user.userId]
+    );
+    if (attendeeRows.length === 0) {
+      return NextResponse.json({ error: "Attendee profile not found" }, { status: 403 });
+    }
+
+    const conn = await pool.getConnection();
+    try {
+      await conn.query("CALL hold_seats(?, ?, ?, ?, @booking_id)", [
+        attendeeRows[0].attendee_id,
+        eventId,
+        seatIds.join(","),
+        HOLD_MINUTES,
+      ]);
+      const [[result]]: any = await conn.query("SELECT @booking_id AS booking_id");
+      const bookingId = result.booking_id;
+
+      if (bookingId === -1) {
+        return NextResponse.json(
+          { error: "One or more selected seats are no longer available" },
+          { status: 409 }
+        );
+      }
+      if (bookingId === -2) {
+        return NextResponse.json(
+          { error: "One or more seat ids are invalid for this event" },
+          { status: 400 }
+        );
+      }
+
+      return NextResponse.json({ bookingId, holdMinutes: HOLD_MINUTES }, { status: 201 });
+    } finally {
+      conn.release();
+    }
+  } catch (err: any) {
+    return NextResponse.json({ error: err.message }, { status: 500 });
+  }
+}
