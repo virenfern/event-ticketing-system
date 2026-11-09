@@ -23,7 +23,8 @@ export async function GET(
     }
 
     const [seatRows] = await pool.query(
-      `SELECT seat_id, section, row_no, seat_no, seat_type, price, status
+      `SELECT seat_id, section, row_no, seat_no, seat_type, price,
+              calculate_dynamic_price(seat_id) AS dynamic_price, status
        FROM seats
        WHERE event_id = ?
        ORDER BY section, row_no, seat_no`,
