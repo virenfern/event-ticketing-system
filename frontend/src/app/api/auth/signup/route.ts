@@ -12,7 +12,8 @@ export async function POST(req: Request) {
         { status: 400 }
       );
     }
-    if (!["attendee", "organizer", "admin"].includes(role)) {
+        // Admin accounts can't be self-registered; they are created directly in the database
+    if (!["attendee", "organizer"].includes(role)) {
       return NextResponse.json({ error: "Invalid role" }, { status: 400 });
     }
 
