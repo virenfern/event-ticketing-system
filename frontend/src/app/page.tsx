@@ -1,80 +1,160 @@
 
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 
-const events = [
-  {
-    id: 1,
-    title: "Neon Nights Music Festival",
-    category: "Music",
-    date: "November 21, 2026",
-    location: "Bengaluru",
-    price: 1499,
-    icon: "🎵",
-    color: "from-purple-600/50 to-pink-500/20",
-    description: "An unforgettable night of music and energy.",
-  },
-  {
-    id: 2,
-    title: "FutureTech Summit 2026",
-    category: "Technology",
-    date: "November 25, 2026",
-    location: "Bengaluru",
-    price: 999,
-    icon: "💻",
-    color: "from-blue-600/50 to-cyan-500/20",
-    description: "Explore the future of technology and innovation.",
-  },
-  {
-    id: 3,
-    title: "The Creative Canvas",
-    category: "Art",
-    date: "December 5, 2026",
-    location: "Mumbai",
-    price: 599,
-    icon: "🎨",
-    color: "from-orange-600/50 to-pink-500/20",
-    description: "A creative space for artists and art lovers.",
-  },
-  {
-    id: 4,
-    title: "Startup Connect",
-    category: "Business",
-    date: "December 12, 2026",
-    location: "Hyderabad",
-    price: 799,
-    icon: "🚀",
-    color: "from-emerald-600/50 to-teal-500/20",
-    description: "Meet founders, builders and future leaders.",
-  },
-];
+type Event = {
+  event_id: number;
+  event_name: string;
+  event_date: string;
+  event_time: string;
+  base_price: number | string;
+  status: string;
+  venue_name: string;
+  city: string;
+  tags?: string[];
+};
 
-const categories = [
-  "All",
-  "Music",
-  "Technology",
-  "Art",
-  "Business",
-];
+type EventTag = {
+  tag: string;
+  eventCount: number;
+  eventIds: number[];
+};
+
+function formatDate(value: string) {
+  const date = new Date(`${value.slice(0, 10)}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return value;
+
+  return date.toLocaleDateString("en-IN", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
+}
+
+function getEventIcon(category: string) {
+  const value = category.toLowerCase();
+
+  if (value.includes("music")) return "🎵";
+  if (value.includes("tech")) return "💻";
+  if (value.includes("art")) return "🎨";
+  if (value.includes("business")) return "🚀";
+  if (value.includes("sport")) return "⚽";
+  return "🎟️";
+}
+
+function getEventColor(category: string) {
+  const value = category.toLowerCase();
+
+  if (value.includes("music")) return "from-purple-600/50 to-pink-500/20";
+  if (value.includes("tech")) return "from-blue-600/50 to-cyan-500/20";
+  if (value.includes("art")) return "from-orange-600/50 to-pink-500/20";
+  if (value.includes("business")) return "from-emerald-600/50 to-teal-500/20";
+  return "from-violet-600/50 to-indigo-500/20";
+}
 
 export default function Home() {
+  const [events, setEvents] = useState<Event[]>([]);
+  const [tags, setTags] = useState<EventTag[]>([]);
   const [category, setCategory] = useState("All");
   const [search, setSearch] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
+  // Load events and available tags.
+  useEffect(() => {
+    async function loadInitialData() {
+      try {
+        setLoading(true);
+        setError("");
+
+        const [eventsResponse, tagsResponse] = await Promise.all([
+          fetch("/api/events"),
+          fetch("/api/events/tags"),
+        ]);
+
+        if (!eventsResponse.ok) {
+          throw new Error("Unable to load events.");
+        }
+
+        const eventsData = await eventsResponse.json();
+        const tagsData = await tagsResponse.json();
+
+        if (!Array.isArray(eventsData)) {
+          throw new Error("Invalid events response from server.");
+        }
+
+        setEvents(eventsData);
+        setTags(Array.isArray(tagsData) ? tagsData : []);
+      } catch (err) {
+        setError(
+          err instanceof Error ? err.message : "Something went wrong."
+        );
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    loadInitialData();
+  }, []);
+
+  // Search through MongoDB when the user enters a search term.
+  useEffect(() => {
+    const query = search.trim();
+
+    if (!query) return;
+
+    const timeout = setTimeout(async () => {
+      try {
+        setLoading(true);
+        setError("");
+
+        const response = await fetch(
+          `/api/events/search?q=${encodeURIComponent(query)}`
+        );
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.error || "Event search failed.");
+        }
+
+        if (!Array.isArray(data)) {
+          throw new Error("Invalid search response from server.");
+        }
+
+        setEvents(data);
+      } catch (err) {
+        setError(
+          err instanceof Error ? err.message : "Search failed."
+        );
+      } finally {
+        setLoading(false);
+      }
+    }, 350);
+
+    return () => clearTimeout(timeout);
+  }, [search]);
+
+  // Apply the selected tag to the current event results.
   const filteredEvents = useMemo(() => {
-    return events.filter((event) => {
-      const matchesCategory =
-        category === "All" || event.category === category;
+    if (category === "All") return events;
 
-      const matchesSearch =
-        event.title.toLowerCase().includes(search.toLowerCase()) ||
-        event.location.toLowerCase().includes(search.toLowerCase());
+    const selectedTag = tags.find(
+      (item) => item.tag === category
+    );
 
-      return matchesCategory && matchesSearch;
-    });
-  }, [category, search]);
+    if (!selectedTag) return [];
+
+    const allowedIds = new Set(selectedTag.eventIds);
+    return events.filter((event) => allowedIds.has(event.event_id));
+  }, [events, category, tags]);
+
+  const categories = [
+    "All",
+    ...tags.map((item) => item.tag),
+  ];
 
   return (
     <main className="min-h-screen bg-[#09090f] text-white">
@@ -144,7 +224,7 @@ export default function Home() {
               <input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search events or locations..."
+                placeholder="Search events..."
                 className="w-full bg-transparent py-3 text-sm text-white outline-none placeholder:text-zinc-500"
               />
             </div>
@@ -158,12 +238,7 @@ export default function Home() {
           </div>
 
           <div className="mt-10 flex flex-wrap justify-center gap-3 text-xs text-zinc-500">
-            <span>Popular:</span>
-            <span>Music festivals</span>
-            <span>·</span>
-            <span>Tech conferences</span>
-            <span>·</span>
-            <span>Workshops</span>
+            <span>Discover experiences with VYBE</span>
           </div>
         </div>
       </section>
@@ -203,58 +278,87 @@ export default function Home() {
             </p>
             <h2 className="mt-2 text-3xl font-bold">Upcoming events</h2>
           </div>
+
           <span className="text-sm text-zinc-500">
             {filteredEvents.length} events found
           </span>
         </div>
 
-        {filteredEvents.length > 0 ? (
+        {loading ? (
+          <div className="rounded-2xl border border-white/10 bg-[#12121b] py-20 text-center text-zinc-400">
+            Loading events...
+          </div>
+        ) : error ? (
+          <div className="rounded-2xl border border-red-500/20 bg-[#12121b] py-20 text-center">
+            <h3 className="text-xl font-bold text-red-400">
+              Unable to load events
+            </h3>
+            <p className="mt-2 text-sm text-zinc-400">{error}</p>
+            <button
+              onClick={() => window.location.reload()}
+              className="mt-5 rounded-xl bg-violet-600 px-5 py-2 text-sm font-semibold"
+            >
+              Try again
+            </button>
+          </div>
+        ) : filteredEvents.length > 0 ? (
           <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
-            {filteredEvents.map((event) => (
-              <article
-                key={event.id}
-                className="group overflow-hidden rounded-2xl border border-white/10 bg-[#12121b] transition duration-300 hover:-translate-y-1 hover:border-violet-500/50"
-              >
-                <div
-                  className={`relative flex h-48 items-center justify-center bg-gradient-to-br ${event.color}`}
+            {filteredEvents.map((event) => {
+              const eventCategory = event.tags?.[0] || "Event";
+
+              return (
+                <article
+                  key={event.event_id}
+                  className="group overflow-hidden rounded-2xl border border-white/10 bg-[#12121b] transition duration-300 hover:-translate-y-1 hover:border-violet-500/50"
                 >
-                  <span className="text-7xl transition duration-300 group-hover:scale-110">
-                    {event.icon}
-                  </span>
-                  <span className="absolute left-4 top-4 rounded-full border border-white/10 bg-black/30 px-3 py-1 text-xs backdrop-blur">
-                    {event.category}
-                  </span>
-                </div>
+                  <div
+                    className={`relative flex h-48 items-center justify-center bg-gradient-to-br ${getEventColor(eventCategory)}`}
+                  >
+                    <span className="text-7xl transition duration-300 group-hover:scale-110">
+                      {getEventIcon(eventCategory)}
+                    </span>
 
-                <div className="p-5">
-                  <p className="text-xs text-violet-400">{event.date}</p>
-                  <h3 className="mt-2 text-lg font-bold transition group-hover:text-violet-300">
-                    {event.title}
-                  </h3>
-                  <p className="mt-2 text-sm text-zinc-500">
-                    {event.description}
-                  </p>
-                  <p className="mt-4 text-xs text-zinc-400">
-                    📍 {event.location}
-                  </p>
-
-                  <div className="mt-5 flex items-center justify-between border-t border-white/10 pt-4">
-                    <div>
-                      <p className="text-xs text-zinc-500">Starting from</p>
-                      <p className="text-lg font-bold">
-                        ₹{event.price.toLocaleString("en-IN")}
-                      </p>
-                    </div>
-                    <Link
-                      href={`/events/${event.id}`}
-                      className="rounded-lg bg-white/10 px-4 py-2 text-sm font-semibold transition hover:bg-violet-600"
-                    >
-                      View event
-                    </Link>
+                    <span className="absolute left-4 top-4 rounded-full border border-white/10 bg-black/30 px-3 py-1 text-xs backdrop-blur">
+                      {eventCategory}
+                    </span>
                   </div>
-                </div>
-              </article>
-            ))}
+
+                  <div className="p-5">
+                    <p className="text-xs text-violet-400">
+                      {formatDate(event.event_date)}
+                    </p>
+
+                    <h3 className="mt-2 text-lg font-bold transition group-hover:text-violet-300">
+                      {event.event_name}
+                    </h3>
+
+                    <p className="mt-2 text-sm text-zinc-500">
+                      {event.venue_name}
+                    </p>
+
+                    <p className="mt-4 text-xs text-zinc-400">
+                      📍 {event.city}
+                    </p>
+
+                    <div className="mt-5 flex items-center justify-between border-t border-white/10 pt-4">
+                      <div>
+                        <p className="text-xs text-zinc-500">Starting from</p>
+                        <p className="text-lg font-bold">
+                          ₹{Number(event.base_price).toLocaleString("en-IN")}
+                        </p>
+                      </div>
+
+                      <Link
+                        href={`/events/${event.event_id}`}
+                        className="rounded-lg bg-white/10 px-4 py-2 text-sm font-semibold transition hover:bg-violet-600"
+                      >
+                        View event
+                      </Link>
+                    </div>
+                  </div>
+                </article>
+              );
+            })}
           </div>
         ) : (
           <div className="rounded-2xl border border-white/10 bg-[#12121b] py-20 text-center">
@@ -280,7 +384,8 @@ export default function Home() {
       <section id="about" className="border-t border-white/10 bg-[#11111a]">
         <div className="mx-auto max-w-7xl px-6 py-20 text-center">
           <h2 className="text-3xl font-bold">
-            More than tickets. <span className="text-violet-400">Experiences.</span>
+            More than tickets.{" "}
+            <span className="text-violet-400">Experiences.</span>
           </h2>
           <p className="mx-auto mt-5 max-w-2xl leading-7 text-zinc-400">
             VYBE brings people and experiences together. Discover events,
