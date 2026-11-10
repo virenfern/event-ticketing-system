@@ -9,55 +9,93 @@ export async function POST(req: Request) {
 
     if (!email || !password) {
       return NextResponse.json(
-        { error: "email and password are required" },
+        { error: "Email and password are required" },
         { status: 400 }
       );
     }
 
+    // Match the actual MySQL users table
     const [rows]: any = await pool.query(
-      "SELECT user_id, name, email, password_hash, role, status FROM users WHERE email = ?",
+      `SELECT
+         user_id,
+         full_name AS name,
+         email,
+         password_hash,
+         role,
+         account_status
+       FROM users
+       WHERE email = ?`,
       [email]
     );
 
     if (rows.length === 0) {
-      return NextResponse.json({ error: "Invalid email or password" }, { status: 401 });
+      return NextResponse.json(
+        { error: "Invalid email or password" },
+        { status: 401 }
+      );
     }
 
     const user = rows[0];
 
-    if (user.status !== "active") {
-      return NextResponse.json({ error: "Account is suspended" }, { status: 403 });
+    // Check account status (database enum uses uppercase values)
+    if (user.account_status !== "ACTIVE") {
+      return NextResponse.json(
+        { error: "Your account is not active. Please contact support." },
+        { status: 403 }
+      );
     }
 
-    const passwordMatches = await bcrypt.compare(password, user.password_hash);
-    if (!passwordMatches) {
-      return NextResponse.json({ error: "Invalid email or password" }, { status: 401 });
-    }
-
-    const token = jwt.sign(
-      { userId: user.user_id, role: user.role, email: user.email },
-      process.env.JWT_SECRET!,
-      { expiresIn: "7d" }
+    // Verify password
+    const passwordMatches = await bcrypt.compare(
+      password,
+      user.password_hash
     );
 
-    await pool.query("UPDATE users SET last_login = NOW() WHERE user_id = ?", [user.user_id]);
+    if (!passwordMatches) {
+      return NextResponse.json(
+        { error: "Invalid email or password" },
+        { status: 401 }
+      );
+    }
+
+    if (!process.env.JWT_SECRET) {
+      throw new Error("JWT_SECRET is not configured");
+    }
+
+    // Normalize role to lowercase for API authorization checks
+    const role = String(user.role).toLowerCase();
+
+    const token = jwt.sign(
+      {
+        userId: user.user_id,
+        role,
+        email: user.email,
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: "7d" }
+    );
 
     const response = NextResponse.json({
       userId: user.user_id,
       name: user.name,
-      role: user.role,
+      role,
     });
 
     response.cookies.set("token", token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: "lax",
-      maxAge: 60 * 60 * 24 * 7, // 7 days
+      maxAge: 60 * 60 * 24 * 7,
       path: "/",
     });
 
     return response;
   } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    console.error("Login error:", err);
+
+    return NextResponse.json(
+      { error: "Something went wrong during login" },
+      { status: 500 }
+    );
   }
 }
