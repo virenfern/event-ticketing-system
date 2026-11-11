@@ -3,7 +3,7 @@
 
 import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 
 type EventData = {
   event_id: number;
@@ -60,6 +60,7 @@ const gradients: Record<string, string> = {
 
 function formatDate(date: string) {
   const parsed = new Date(`${date.slice(0, 10)}T00:00:00`);
+
   return parsed.toLocaleDateString("en-IN", {
     day: "numeric",
     month: "long",
@@ -70,6 +71,7 @@ function formatDate(date: string) {
 function formatTime(time: string) {
   const [hours, minutes] = time.split(":").map(Number);
   const date = new Date();
+
   date.setHours(hours, minutes, 0, 0);
 
   return date.toLocaleTimeString("en-IN", {
@@ -81,6 +83,7 @@ function formatTime(time: string) {
 
 function EventDetailsContent() {
   const params = useParams<{ id: string }>();
+  const router = useRouter();
   const id = params.id;
 
   const [data, setData] = useState<EventResponse | null>(null);
@@ -181,33 +184,23 @@ function EventDetailsContent() {
         );
       }
 
-      setBookingMessage(
-        `Booking created! Reference: ${result.bookingReference}. Your seats are held for ${result.holdMinutes} minutes.`
-      );
+      // Ensure the API returned a valid booking ID.
+      if (!result.bookingId) {
+        throw new Error(
+          "Booking was created, but the booking ID was not returned."
+        );
+      }
 
-      const bookedIds = [...selectedSeatIds];
-
-      setData((current) => {
-        if (!current) return current;
-
-        return {
-          ...current,
-          seats: current.seats.map((seat) =>
-            bookedIds.includes(seat.seat_id)
-              ? { ...seat, status: "HELD" }
-              : seat
-          ),
-        };
-      });
-
-      setSelectedSeatIds([]);
+      // Booking created successfully. Navigate to My Bookings
+      // where the attendee can confirm the simulated payment.
+      router.push("/bookings");
     } catch (err) {
       setBookingError(
         err instanceof Error
           ? err.message
           : "Something went wrong. Please try again."
       );
-    } finally {
+
       setBookingLoading(false);
     }
   }
